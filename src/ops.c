@@ -3620,7 +3620,10 @@ op_colon(oparg_T *oap)
 {
     stuffcharReadbuff(':');
     if (oap->is_VIsual)
-	stuffReadbuff((char_u *)"'<,'>");
+	// With 'columnrange' only use the selected text for a characterwise
+	// or blockwise selection.
+	stuffReadbuff((char_u *)(p_colr && curbuf->b_visual.vi_mode != 'V'
+							? "`<,`>" : "'<,'>"));
     else
     {
 	// Make the range look nice, so it can be repeated.

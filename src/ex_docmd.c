@@ -27,6 +27,44 @@ static int	if_level = 0;		// depth in :if
 #endif
 static void	append_command(char_u *cmd);
 
+/*
+ * State for executing a command with a column range, see ":help :range-col".
+ * The lines in the range are temporarily replaced with the text inside the
+ * columns ("narrowed"), the command is executed on those lines and afterwards
+ * the text outside the columns is put back.
+ */
+typedef struct
+{
+    int		cr_active;	// TRUE while the lines are narrowed
+    int		cr_mode;	// COLRANGE_CHAR or COLRANGE_BLOCK
+    bufref_T	cr_buf;		// buffer with the narrowed lines
+    int		cr_closed;	// the buffer was unloaded or reloaded
+    linenr_T	cr_lnum;	// first line of the range
+    linenr_T	cr_count;	// number of lines in the range
+    linenr_T	cr_below;	// number of lines below the range
+    colnr_T	cr_col1;	// eap->col1
+    colnr_T	cr_col2;	// eap->col2
+    char_u	**cr_orig;	// original lines
+    char_u	**cr_text;	// text inside the columns
+    char_u	**cr_prefix;	// text before the columns
+    char_u	**cr_suffix;	// text after the columns
+    colnr_T	*cr_prefix_width; // COLRANGE_BLOCK: screen width of prefix
+    varnumber_T	cr_changedtick;	// b:changedtick after narrowing
+    int		cr_undo_pending; // original lines not saved for undo yet
+    pos_T	cr_namedm[NMARKS]; // named marks before the command
+    visualinfo_T cr_visual;	// Visual area before the command
+    yankreg_T	*cr_yank_reg;	// last written register before the command
+    string_T	*cr_yank_array;	// its contents before the command
+} colrange_T;
+
+// Set by get_address() when the address is a "`x" mark.
+static int	addr_backtick_mark = NUL;
+static pos_T	addr_backtick_pos;
+
+static char	*colrange_resolve(exarg_T *eap);
+static char	*colrange_start(exarg_T *eap, colrange_T *cr);
+static void	colrange_end(exarg_T *eap, colrange_T *cr);
+
 #ifndef FEAT_MENU
 # define ex_emenu		ex_ni
 # define ex_menu		ex_ni
@@ -1798,8 +1836,10 @@ do_one_cmd(
     int		sourcing = flags & DOCMD_VERBOSE;
     int		did_append_cmd = FALSE;
     char_u	*newline_cut = NULL;	// where the argument ends at a newline
+    colrange_T	colrange;		// state for a column range
 
     CLEAR_FIELD(ea);
+    CLEAR_FIELD(colrange);
     ea.line1 = 1;
     ea.line2 = 1;
 #ifdef FEAT_EVAL
@@ -2218,6 +2258,14 @@ do_one_cmd(
 	    lnum = ea.line1;
 	    ea.line1 = ea.line2;
 	    ea.line2 = lnum;
+	    if (ea.addr_col[0].ac_kind != ADDRCOL_NONE
+				   || ea.addr_col[1].ac_kind != ADDRCOL_NONE)
+	    {
+		addr_col_T  ac = ea.addr_col[0];
+
+		ea.addr_col[0] = ea.addr_col[1];
+		ea.addr_col[1] = ac;
+	    }
 	}
 	if ((errormsg = invalid_range(&ea)) != NULL)
 	    goto doend;
@@ -2426,6 +2474,7 @@ do_one_cmd(
 	else
 	{
 	    ea.line1 = ea.line2;
+	    ea.addr_col[0] = ea.addr_col[1];
 	    if (ea.line2 >= LONG_MAX - (n - 1))
 		ea.line2 = LONG_MAX;  // avoid overflow
 	    else
@@ -2629,6 +2678,17 @@ do_one_cmd(
  * 7. Execute the command.
  */
 
+    // With a column range the command only sees the text inside the columns.
+    if (!ea.skip && (ea.addr_col[0].ac_kind != ADDRCOL_NONE
+				|| ea.addr_col[1].ac_kind != ADDRCOL_NONE))
+    {
+	if ((errormsg = colrange_resolve(&ea)) != NULL)
+	    goto doend;
+	if (ea.colrange != COLRANGE_NONE
+		    && (errormsg = colrange_start(&ea, &colrange)) != NULL)
+	    goto doend;
+    }
+
     if (IS_USER_CMDIDX(ea.cmdidx))
     {
 	/*
@@ -2645,6 +2705,9 @@ do_one_cmd(
 	if (ea.errmsg != NULL)
 	    errormsg = ea.errmsg;
     }
+
+    if (colrange.cr_active)
+	colrange_end(&ea, &colrange);
 
     // A command such as ":autocmd" may continue after a '|' in its argument.
     // Then the lines after the newline must follow that command.  Not for a
@@ -2804,6 +2867,20 @@ ex_range_without_command(exarg_T *eap)
 	    else
 		curwin->w_cursor.lnum = eap->line2;
 	    beginline(BL_SOL | BL_FIX);
+
+	    // ":{lnum}.{col}" and ":`x" also move to the column.
+	    if (eap->addr_col[1].ac_kind == ADDRCOL_VCOL)
+	    {
+		coladvance(eap->addr_col[1].ac_col);
+		curwin->w_curswant = eap->addr_col[1].ac_col;
+		curwin->w_set_curswant = FALSE;
+	    }
+	    else if (eap->addr_col[1].ac_kind == ADDRCOL_MARK)
+	    {
+		curwin->w_cursor.col = eap->addr_col[1].ac_col;
+		check_cursor_col();
+		curwin->w_set_curswant = TRUE;
+	    }
 	}
     }
     return errormsg;
@@ -2953,12 +3030,15 @@ parse_command_modifiers(
     int	    starts_with_colon = FALSE;
     int	    vim9script = in_vim9script();
     int	    has_visual_range = FALSE;
+    char	    *visual_range = NULL;   // "'<,'>" or "`<,`>"
 
     CLEAR_POINTER(cmod);
     cmod->cmod_flags = sticky_cmdmod_flags;
 
-    if (STRNCMP(eap->cmd, "'<,'>", 5) == 0)
+    if (STRNCMP(eap->cmd, "'<,'>", 5) == 0
+				       || STRNCMP(eap->cmd, "`<,`>", 5) == 0)
     {
+	visual_range = eap->cmd[0] == '`' ? "`<,`>" : "'<,'>";
 	// The automatically inserted Visual area range is skipped, so that
 	// typing ":cmdmod cmd" in Visual mode works without having to move the
 	// range to after the modifiers. The command will be "'<,'>cmdmod cmd",
@@ -3309,14 +3389,16 @@ parse_command_modifiers(
 	    {
 		mch_memmove(cmd_start - 5, cmd_start, eap->cmd - cmd_start);
 		eap->cmd -= 5;
-		mch_memmove(eap->cmd - 1, ":'<,'>", 6);
+		eap->cmd[-1] = ':';
+		mch_memmove(eap->cmd, visual_range, 5);
 	    }
 	}
 	else
 	    // No modifiers, move the pointer back.
 	    // Special case: change empty command to "+".
 	    if (use_plus_cmd)
-		eap->cmd = (char_u *)"'<,'>+";
+		eap->cmd = (char_u *)(*visual_range == '`' ? "`<,`>+"
+								  : "'<,'>+");
 	    else
 		eap->cmd = orig_cmd;
     }
@@ -3459,6 +3541,756 @@ undo_cmdmod(cmdmod_T *cmod)
     }
 }
 
+// The command with a column range that is currently being executed.
+static colrange_T *active_colrange = NULL;
+
+/*
+ * Return TRUE if "ac" is a "`<" or "`>" mark.
+ */
+    static int
+is_visual_mark_col(addr_col_T *ac)
+{
+    return ac->ac_kind == ADDRCOL_MARK
+				   && (ac->ac_mark == '<' || ac->ac_mark == '>');
+}
+
+/*
+ * Get the screen column for one end of a blockwise column range.
+ */
+    static colnr_T
+colrange_addr_vcol(addr_col_T *ac, linenr_T lnum, int first)
+{
+    pos_T	pos;
+    colnr_T	start;
+    colnr_T	end;
+
+    switch (ac->ac_kind)
+    {
+	case ADDRCOL_VCOL:
+	    return ac->ac_col;
+	case ADDRCOL_MARK:
+	    pos.lnum = lnum;
+	    pos.col = ac->ac_col;
+	    pos.coladd = 0;
+	    getvvcol(curwin, &pos, &start, NULL, &end, 0);
+	    return first ? start : end;
+	default:
+	    return first ? 0 : MAXCOL;
+    }
+}
+
+/*
+ * Figure out the kind of column range and the columns from the addresses in
+ * "eap".  Sets "eap->colrange", "eap->col1" and "eap->col2".
+ * Returns an error message or NULL.
+ */
+    static char *
+colrange_resolve(exarg_T *eap)
+{
+    addr_col_T	*ac1 = &eap->addr_col[0];
+    addr_col_T	*ac2 = &eap->addr_col[1];
+    int		visual_marks = is_visual_mark_col(ac1)
+						    && is_visual_mark_col(ac2);
+    int		mode;
+
+    eap->colrange = COLRANGE_NONE;
+    if (ac1->ac_kind == ADDRCOL_VCOL || ac2->ac_kind == ADDRCOL_VCOL)
+	mode = COLRANGE_BLOCK;
+    else if (visual_marks && curbuf->b_visual.vi_mode == Ctrl_V)
+	mode = COLRANGE_BLOCK;
+    else if (visual_marks && curbuf->b_visual.vi_mode == 'V')
+	return NULL;	    // "`<,`>" after "V" is a normal line range
+    else
+	mode = COLRANGE_CHAR;
+
+    // Moving or copying the text elsewhere would need to know where the
+    // columns end up, that is not supported.
+    if (eap->addr_type != ADDR_LINES || eap->cmdidx == CMD_move
+			|| eap->cmdidx == CMD_copy || eap->cmdidx == CMD_t)
+	return _(e_column_range_not_supported_for_this_command);
+    if (eap->line1 < 1 || eap->line1 > eap->line2
+				|| eap->line2 > curbuf->b_ml.ml_line_count)
+	return _(e_invalid_range);
+
+    if (mode == COLRANGE_BLOCK)
+    {
+	colnr_T	v1;
+	colnr_T	v2;
+
+	if (visual_marks)
+	{
+	    // Same as what a Visual block operator uses.
+	    visualinfo_T    *vi = &curbuf->b_visual;
+	    pos_T	    *first = LT_POS(vi->vi_end, vi->vi_start)
+						 ? &vi->vi_end : &vi->vi_start;
+	    pos_T	    *last = first == &vi->vi_end
+						 ? &vi->vi_start : &vi->vi_end;
+	    colnr_T	    start;
+	    colnr_T	    end;
+
+	    getvvcol(curwin, first, &v1, NULL, &v2, 0);
+	    getvvcol(curwin, last, &start, NULL, &end, 0);
+	    if (start < v1)
+		v1 = start;
+	    if (end > v2)
+	    {
+		if (*p_sel == 'e' && start >= 1 && start - 1 >= v2)
+		    v2 = start - 1;
+		else
+		    v2 = end;
+	    }
+	    if (vi->vi_curswant == MAXCOL)
+		v2 = MAXCOL;
+	}
+	else
+	{
+	    v1 = colrange_addr_vcol(ac1, eap->line1, TRUE);
+	    v2 = colrange_addr_vcol(ac2, eap->line2, FALSE);
+	    if (v1 > v2)
+	    {
+		colnr_T	t = v1;
+
+		v1 = v2;
+		v2 = t;
+	    }
+	}
+	eap->col1 = v1;
+	eap->col2 = v2;
+    }
+    else
+    {
+	colnr_T	c1 = ac1->ac_kind == ADDRCOL_MARK ? ac1->ac_col : 0;
+	colnr_T	c2 = ac2->ac_kind == ADDRCOL_MARK ? ac2->ac_col : MAXCOL;
+
+	// With 'selection' "exclusive" the Visual area does not include the
+	// character under the end mark.
+	if (visual_marks && *p_sel == 'e' && c2 != MAXCOL)
+	{
+	    if (c2 > 0)
+	    {
+		char_u *line = ml_get(eap->line2);
+
+		if (c2 > ml_get_len(eap->line2))
+		    c2 = ml_get_len(eap->line2);
+		c2 -= 1 + (*mb_head_off)(line, line + c2 - 1);
+	    }
+	    else if (eap->line2 > eap->line1)
+	    {
+		--eap->line2;
+		c2 = MAXCOL;
+	    }
+	}
+	if (eap->line1 == eap->line2 && c1 > c2)
+	{
+	    colnr_T	t = c1;
+
+	    c1 = c2;
+	    c2 = t;
+	}
+	eap->col1 = c1;
+	eap->col2 = c2;
+    }
+    eap->colrange = mode;
+    return NULL;
+}
+
+/*
+ * Return allocated "lead" spaces, "len" bytes of "s" and "trail" spaces.
+ */
+    static char_u *
+colrange_concat(int lead, char_u *s, int len, int trail)
+{
+    char_u  *res = alloc(lead + len + trail + 1);
+
+    if (res == NULL)
+	return NULL;
+    vim_memset(res, ' ', lead);
+    mch_memmove(res + lead, s, len);
+    vim_memset(res + lead + len, ' ', trail);
+    res[lead + len + trail] = NUL;
+    return res;
+}
+
+/*
+ * Split line "idx" of a blockwise column range into the text before, inside
+ * and after the screen columns.  A character that is partly inside the
+ * columns (e.g. a Tab) is split into spaces, like with a Visual block.
+ */
+    static int
+colrange_split_block(colrange_T *cr, linenr_T idx)
+{
+    char_u	    *line = cr->cr_orig[idx];
+    colnr_T	    vcol1 = cr->cr_col1;
+    colnr_T	    vcol2 = cr->cr_col2;
+    chartabsize_T   cts;
+    char_u	    *pre_end;
+    char_u	    *text_start;
+    char_u	    *text_end;
+    int		    pre_sp = 0;		// spaces at end of prefix
+    int		    lead_sp = 0;	// spaces at start of text
+    int		    trail_sp = 0;	// spaces at end of text
+    int		    suf_sp = 0;		// spaces at start of suffix
+    int		    incr;
+    colnr_T	    char_end;
+
+    init_chartabsize_arg(&cts, curwin, cr->cr_lnum + idx, 0, line, line);
+
+    // characters completely before the block
+    while (*cts.cts_ptr != NUL)
+    {
+	incr = lbr_chartabsize(&cts);
+	if (vcol1 != MAXCOL && cts.cts_vcol + incr > vcol1)
+	    break;
+	cts.cts_vcol += incr;
+	MB_PTR_ADV(cts.cts_ptr);
+    }
+    pre_end = cts.cts_ptr;
+    cr->cr_prefix_width[idx] = cts.cts_vcol;
+
+    if (*cts.cts_ptr != NUL && cts.cts_vcol < vcol1)
+    {
+	// character starts before the block and ends inside or after it
+	incr = lbr_chartabsize(&cts);
+	char_end = cts.cts_vcol + incr - 1;
+	pre_sp = vcol1 - cts.cts_vcol;
+	if (char_end > vcol2)
+	{
+	    lead_sp = vcol2 - vcol1 + 1;
+	    suf_sp = char_end - vcol2;
+	}
+	else
+	    lead_sp = char_end - vcol1 + 1;
+	cts.cts_vcol += incr;
+	MB_PTR_ADV(cts.cts_ptr);
+	cr->cr_prefix_width[idx] = vcol1;
+    }
+
+    text_start = cts.cts_ptr;
+    if (suf_sp == 0)
+    {
+	// characters completely inside the block
+	while (*cts.cts_ptr != NUL)
+	{
+	    incr = lbr_chartabsize(&cts);
+	    if (vcol2 != MAXCOL && cts.cts_vcol + incr - 1 > vcol2)
+		break;
+	    cts.cts_vcol += incr;
+	    MB_PTR_ADV(cts.cts_ptr);
+	}
+	text_end = cts.cts_ptr;
+	if (*cts.cts_ptr != NUL && cts.cts_vcol <= vcol2)
+	{
+	    // character starts inside the block and ends after it
+	    incr = lbr_chartabsize(&cts);
+	    trail_sp = vcol2 - cts.cts_vcol + 1;
+	    suf_sp = cts.cts_vcol + incr - 1 - vcol2;
+	    MB_PTR_ADV(cts.cts_ptr);
+	}
+    }
+    else
+	text_end = text_start;
+    clear_chartabsize_arg(&cts);
+
+    cr->cr_prefix[idx] = colrange_concat(0, line, (int)(pre_end - line),
+									pre_sp);
+    cr->cr_text[idx] = colrange_concat(lead_sp, text_start,
+				       (int)(text_end - text_start), trail_sp);
+    cr->cr_suffix[idx] = colrange_concat(suf_sp, cts.cts_ptr,
+					       (int)STRLEN(cts.cts_ptr), 0);
+    if (cr->cr_prefix[idx] == NULL || cr->cr_text[idx] == NULL
+						  || cr->cr_suffix[idx] == NULL)
+	return FAIL;
+    return OK;
+}
+
+/*
+ * Split line "idx" of a characterwise column range into the text before,
+ * inside and after the range.
+ */
+    static int
+colrange_split_char(colrange_T *cr, linenr_T idx)
+{
+    char_u	*line = cr->cr_orig[idx];
+    colnr_T	len = (colnr_T)STRLEN(line);
+    colnr_T	start = 0;
+    colnr_T	end = len;
+
+    if (idx == 0 && cr->cr_col1 > 0)
+    {
+	start = cr->cr_col1 < len ? cr->cr_col1 : len;
+	if (start < len)
+	    start -= (*mb_head_off)(line, line + start);
+    }
+    if (idx == cr->cr_count - 1 && cr->cr_col2 < len)
+    {
+	// the last character is included
+	end = cr->cr_col2 - (*mb_head_off)(line, line + cr->cr_col2);
+	end += (*mb_ptr2len)(line + end);
+    }
+    if (end < start)
+	end = start;
+
+    cr->cr_prefix[idx] = vim_strnsave(line, start);
+    cr->cr_text[idx] = vim_strnsave(line + start, end - start);
+    cr->cr_suffix[idx] = vim_strsave(line + end);
+    if (cr->cr_prefix[idx] == NULL || cr->cr_text[idx] == NULL
+						  || cr->cr_suffix[idx] == NULL)
+	return FAIL;
+    return OK;
+}
+
+/*
+ * Free the memory used by "cr".
+ */
+    static void
+colrange_free(colrange_T *cr)
+{
+    linenr_T	i;
+
+    for (i = 0; i < cr->cr_count; ++i)
+    {
+	if (cr->cr_orig != NULL)
+	    vim_free(cr->cr_orig[i]);
+	if (cr->cr_text != NULL)
+	    vim_free(cr->cr_text[i]);
+	if (cr->cr_prefix != NULL)
+	    vim_free(cr->cr_prefix[i]);
+	if (cr->cr_suffix != NULL)
+	    vim_free(cr->cr_suffix[i]);
+    }
+    VIM_CLEAR(cr->cr_orig);
+    VIM_CLEAR(cr->cr_text);
+    VIM_CLEAR(cr->cr_prefix);
+    VIM_CLEAR(cr->cr_suffix);
+    VIM_CLEAR(cr->cr_prefix_width);
+}
+
+/*
+ * Prepare for executing a command with a column range: replace the lines in
+ * the range with the text inside the columns.
+ * Returns an error message or NULL.
+ */
+    static char *
+colrange_start(exarg_T *eap, colrange_T *cr)
+{
+    linenr_T	i;
+    int		ok = TRUE;
+#ifdef FEAT_LINEBREAK
+    int		lbr_saved;
+#endif
+
+    if (active_colrange != NULL)
+	return _(e_cannot_nest_column_range_commands);
+
+    CLEAR_POINTER(cr);
+    cr->cr_mode = eap->colrange;
+    set_bufref(&cr->cr_buf, curbuf);
+    cr->cr_lnum = eap->line1;
+    cr->cr_count = eap->line2 - eap->line1 + 1;
+    cr->cr_below = curbuf->b_ml.ml_line_count - eap->line2;
+    cr->cr_col1 = eap->col1;
+    cr->cr_col2 = eap->col2;
+    cr->cr_orig = ALLOC_CLEAR_MULT(char_u *, cr->cr_count);
+    cr->cr_text = ALLOC_CLEAR_MULT(char_u *, cr->cr_count);
+    cr->cr_prefix = ALLOC_CLEAR_MULT(char_u *, cr->cr_count);
+    cr->cr_suffix = ALLOC_CLEAR_MULT(char_u *, cr->cr_count);
+    cr->cr_prefix_width = ALLOC_CLEAR_MULT(colnr_T, cr->cr_count);
+    if (cr->cr_orig == NULL || cr->cr_text == NULL || cr->cr_prefix == NULL
+		    || cr->cr_suffix == NULL || cr->cr_prefix_width == NULL)
+    {
+	colrange_free(cr);
+	return _(e_out_of_memory);
+    }
+
+#ifdef FEAT_LINEBREAK
+    // 'linebreak' does not change the columns of a Visual block either.
+    lbr_saved = reset_lbr();
+#endif
+    for (i = 0; ok && i < cr->cr_count; ++i)
+    {
+	cr->cr_orig[i] = vim_strsave(ml_get(cr->cr_lnum + i));
+	if (cr->cr_orig[i] == NULL)
+	    ok = FALSE;
+	else if (cr->cr_mode == COLRANGE_BLOCK)
+	    ok = colrange_split_block(cr, i) == OK;
+	else
+	    ok = colrange_split_char(cr, i) == OK;
+    }
+#ifdef FEAT_LINEBREAK
+    restore_lbr(lbr_saved);
+#endif
+    if (!ok)
+    {
+	colrange_free(cr);
+	return _(e_out_of_memory);
+    }
+
+    // Narrow the lines.  This is not a change: it is not saved for undo and
+    // b:changedtick is not incremented.  When the command changes the text
+    // the original lines are saved for undo by colrange_before_undo_save().
+    for (i = 0; i < cr->cr_count; ++i)
+	ml_replace(cr->cr_lnum + i, cr->cr_text[i], TRUE);
+    cr->cr_changedtick = CHANGEDTICK(curbuf);
+    cr->cr_undo_pending = TRUE;
+
+    mch_memmove(cr->cr_namedm, curbuf->b_namedm, sizeof(cr->cr_namedm));
+    cr->cr_visual = curbuf->b_visual;
+    cr->cr_yank_reg = get_y_previous();
+    cr->cr_yank_array = cr->cr_yank_reg == NULL
+					     ? NULL : cr->cr_yank_reg->y_array;
+
+    if (curwin->w_cursor.lnum >= cr->cr_lnum
+		     && curwin->w_cursor.lnum < cr->cr_lnum + cr->cr_count)
+    {
+	colnr_T	len = (colnr_T)STRLEN(
+			    cr->cr_prefix[curwin->w_cursor.lnum - cr->cr_lnum]);
+
+	curwin->w_cursor.col = curwin->w_cursor.col > len
+					       ? curwin->w_cursor.col - len : 0;
+	check_cursor_col();
+    }
+
+    // Changes made by the command, together with putting back the text
+    // outside of the columns, are undone as one change.
+    ++no_u_sync;
+    cr->cr_active = TRUE;
+    active_colrange = cr;
+    return NULL;
+}
+
+/*
+ * Called by u_savecommon() before lines are saved for undo.  When a command
+ * with a column range makes its first change, first save the lines as they
+ * were before narrowing, so that undo restores the original text.
+ */
+    void
+colrange_before_undo_save(void)
+{
+    colrange_T	*cr = active_colrange;
+    linenr_T	i;
+
+    if (cr == NULL || !cr->cr_undo_pending || cr->cr_closed
+						|| cr->cr_buf.br_buf != curbuf)
+	return;
+    cr->cr_undo_pending = FALSE;
+    if (CHANGEDTICK(curbuf) != cr->cr_changedtick
+	    || curbuf->b_ml.ml_line_count
+			  != cr->cr_lnum - 1 + cr->cr_count + cr->cr_below)
+	return;	    // text was changed without saving for undo
+
+    for (i = 0; i < cr->cr_count; ++i)
+	ml_replace(cr->cr_lnum + i, cr->cr_orig[i], TRUE);
+    (void)u_save(cr->cr_lnum - 1, cr->cr_lnum + cr->cr_count);
+    for (i = 0; i < cr->cr_count; ++i)
+	ml_replace(cr->cr_lnum + i, cr->cr_text[i], TRUE);
+}
+
+/*
+ * Called when the memline of "buf" is closed.  When a command with a column
+ * range is being executed for "buf" the text must not be put back.
+ */
+    void
+colrange_ml_close(buf_T *buf)
+{
+    if (active_colrange != NULL && active_colrange->cr_buf.br_buf == buf)
+	active_colrange->cr_closed = TRUE;
+}
+
+/*
+ * Return the line to put back for line "idx" of a column range, where "text"
+ * is what the command left inside the columns.
+ * "newcount" is the number of lines the command left in the range, "nfinal"
+ * the number of lines that will be put back.
+ */
+    static char_u *
+colrange_final_line(
+	colrange_T  *cr,
+	linenr_T    idx,
+	char_u	    *text,
+	linenr_T    newcount,
+	linenr_T    nfinal)
+{
+    char_u	*prefix = (char_u *)"";
+    char_u	*suffix = (char_u *)"";
+    int		pad = 0;
+    int		plen, tlen, slen;
+    char_u	*res;
+
+    if (cr->cr_mode == COLRANGE_BLOCK)
+    {
+	if (idx < cr->cr_count)
+	{
+	    // Keep the line as it was when the text in the columns was not
+	    // changed, a Tab may have been split.
+	    if (idx < newcount && STRCMP(text, cr->cr_text[idx]) == 0)
+		return vim_strsave(cr->cr_orig[idx]);
+	    prefix = cr->cr_prefix[idx];
+	    suffix = cr->cr_suffix[idx];
+	    if (*text != NUL && cr->cr_col1 != MAXCOL
+				    && cr->cr_prefix_width[idx] < cr->cr_col1)
+		// line was too short, fill up to the first column
+		pad = cr->cr_col1 - cr->cr_prefix_width[idx];
+	}
+	else if (*text != NUL && cr->cr_col1 != MAXCOL)
+	    // extra line below the range
+	    pad = cr->cr_col1;
+    }
+    else
+    {
+	if (idx == 0)
+	    prefix = cr->cr_prefix[0];
+	if (idx == nfinal - 1)
+	    suffix = cr->cr_suffix[cr->cr_count - 1];
+    }
+
+    plen = (int)STRLEN(prefix);
+    tlen = (int)STRLEN(text);
+    slen = (int)STRLEN(suffix);
+    res = alloc(plen + pad + tlen + slen + 1);
+    if (res == NULL)
+	return NULL;
+    mch_memmove(res, prefix, plen);
+    vim_memset(res + plen, ' ', pad);
+    mch_memmove(res + plen + pad, text, tlen);
+    mch_memmove(res + plen + pad + tlen, suffix, slen + 1);
+    return res;
+}
+
+/*
+ * Adjust the cursor column for the text before the columns that was put back
+ * in the first "nlines" lines of the range.
+ */
+    static void
+colrange_fix_cursor(colrange_T *cr, linenr_T nlines)
+{
+    linenr_T	idx = curwin->w_cursor.lnum - cr->cr_lnum;
+
+    if (idx < 0 || idx >= nlines)
+	return;
+    if (cr->cr_mode == COLRANGE_BLOCK ? idx < cr->cr_count : idx == 0)
+	curwin->w_cursor.col += (colnr_T)STRLEN(cr->cr_prefix[idx]);
+    check_cursor_col();
+}
+
+/*
+ * After ":delete" or ":yank" with a column range: make the register
+ * blockwise or characterwise.
+ */
+    static void
+colrange_set_register(exarg_T *eap, colrange_T *cr)
+{
+    yankreg_T	*reg = get_y_previous();
+    linenr_T	i;
+    colnr_T	width = 0;
+
+    if (reg == NULL || reg->y_type != MLINE || eap->regname == '_'
+				       || ASCII_ISUPPER(eap->regname)
+				       || (reg == cr->cr_yank_reg
+					  && reg->y_array == cr->cr_yank_array))
+	return;	    // nothing yanked or appended to a register
+
+    if (cr->cr_mode == COLRANGE_CHAR)
+    {
+	reg->y_type = MCHAR;
+	return;
+    }
+    reg->y_type = MBLOCK;
+    if (cr->cr_col1 != MAXCOL && cr->cr_col2 != MAXCOL)
+	width = cr->cr_col2 - cr->cr_col1;
+    else
+	for (i = 0; i < reg->y_size; ++i)
+	{
+	    colnr_T w = linetabsize_str(reg->y_array[i].string) - 1;
+
+	    if (w > width)
+		width = w;
+	}
+    reg->y_width = width;
+}
+
+/*
+ * Put back the text outside of the columns after the command changed the
+ * narrowed lines.
+ */
+    static void
+colrange_put_back(colrange_T *cr)
+{
+    int		was_empty = (curbuf->b_ml.ml_flags & ML_EMPTY) != 0;
+    linenr_T	newcount;	// number of lines left by the command
+    linenr_T	oldlines;	// number of lines to replace
+    linenr_T	nfinal;		// number of lines to put back
+    char_u	**final;
+    linenr_T	i;
+
+    // Assume the command only changed lines inside the range.
+    newcount = curbuf->b_ml.ml_line_count - cr->cr_below - (cr->cr_lnum - 1);
+    if (was_empty || newcount < 0)
+	newcount = 0;
+    if (cr->cr_lnum > curbuf->b_ml.ml_line_count + 1)
+	return;		// lines above the range were deleted
+
+    if (cr->cr_mode == COLRANGE_BLOCK)
+	nfinal = newcount > cr->cr_count ? newcount : cr->cr_count;
+    else
+	nfinal = newcount > 1 ? newcount : 1;
+    final = ALLOC_CLEAR_MULT(char_u *, nfinal);
+    if (final == NULL)
+	return;
+    for (i = 0; i < nfinal; ++i)
+    {
+	final[i] = colrange_final_line(cr, i,
+		i < newcount ? ml_get(cr->cr_lnum + i) : (char_u *)"",
+		newcount, nfinal);
+	if (final[i] == NULL)
+	    goto theend;
+    }
+
+    // When the command did not save the original lines for undo, undo will
+    // restore the narrowed lines.
+    cr->cr_undo_pending = FALSE;
+    oldlines = was_empty ? 1 : newcount;
+    (void)u_save(cr->cr_lnum - 1, cr->cr_lnum + oldlines);
+
+    for (i = 0; i < nfinal; ++i)
+    {
+	if (i < oldlines)
+	{
+	    ml_replace(cr->cr_lnum + i, final[i], FALSE);
+	    final[i] = NULL;
+	}
+	else
+	    ml_append(cr->cr_lnum + i - 1, final[i], (colnr_T)0, FALSE);
+    }
+    if (oldlines > 0)
+	changed_lines(cr->cr_lnum, 0, cr->cr_lnum + oldlines, 0L);
+    if (nfinal > oldlines)
+	appended_lines_mark(cr->cr_lnum + oldlines - 1, nfinal - oldlines);
+
+    if (nfinal == cr->cr_count)
+    {
+	linenr_T    last = cr->cr_lnum + cr->cr_count - 1;
+	int	    j;
+
+	// Marks in deleted lines were removed, restore them.
+	for (j = 0; j < NMARKS; ++j)
+	    if (cr->cr_namedm[j].lnum >= cr->cr_lnum
+					     && cr->cr_namedm[j].lnum <= last)
+		curbuf->b_namedm[j] = cr->cr_namedm[j];
+	if (cr->cr_visual.vi_start.lnum >= cr->cr_lnum
+		&& cr->cr_visual.vi_start.lnum <= last
+		&& cr->cr_visual.vi_end.lnum >= cr->cr_lnum
+		&& cr->cr_visual.vi_end.lnum <= last)
+	    curbuf->b_visual = cr->cr_visual;
+    }
+    colrange_fix_cursor(cr, nfinal);
+
+theend:
+    for (i = 0; i < nfinal; ++i)
+	vim_free(final[i]);
+    vim_free(final);
+}
+
+/*
+ * Finish executing a command with a column range: put back the text before
+ * and after the columns.
+ */
+    static void
+colrange_end(exarg_T *eap, colrange_T *cr)
+{
+    buf_T	*buf = cr->cr_buf.br_buf;
+    aco_save_T	aco;
+    int		switched = FALSE;
+    linenr_T	i;
+
+    --no_u_sync;
+    active_colrange = NULL;
+    cr->cr_active = FALSE;
+
+    if (!bufref_valid(&cr->cr_buf) || cr->cr_closed)
+    {
+	// buffer was wiped out, unloaded or reloaded
+	colrange_free(cr);
+	return;
+    }
+    if (buf != curbuf)
+    {
+	aucmd_prepbuf(&aco, buf);
+	if (curbuf != buf)
+	{
+	    colrange_free(cr);
+	    return;
+	}
+	switched = TRUE;
+    }
+
+    if (eap->cmdidx == CMD_delete || eap->cmdidx == CMD_yank)
+	colrange_set_register(eap, cr);
+
+    if (CHANGEDTICK(curbuf) == cr->cr_changedtick
+	    && curbuf->b_ml.ml_line_count
+			   == cr->cr_lnum - 1 + cr->cr_count + cr->cr_below)
+    {
+	// The text was not changed, restore the original lines.
+	for (i = 0; i < cr->cr_count; ++i)
+	{
+	    ml_replace(cr->cr_lnum + i, cr->cr_orig[i], FALSE);
+	    cr->cr_orig[i] = NULL;
+	}
+	colrange_fix_cursor(cr, cr->cr_count);
+	redraw_buf_later(curbuf, UPD_NOT_VALID);
+    }
+    else
+	colrange_put_back(cr);
+
+    if (switched)
+	aucmd_restbuf(&aco);
+    colrange_free(cr);
+}
+
+
+/*
+ * Check for a column after an address in "eap->cmd": "{address}.{col}" or
+ * "{address}.$".  Also remember the column of a "`x" mark address.
+ * Advances "eap->cmd" past the column.
+ * Returns FAIL and sets "errormsg" for an invalid column.
+ */
+    static int
+parse_addr_col(exarg_T *eap, linenr_T lnum, char **errormsg)
+{
+    addr_col_T	*ac = &eap->addr_col[1];
+
+    if (addr_backtick_mark != NUL
+			  && (eap->skip || lnum == addr_backtick_pos.lnum))
+    {
+	ac->ac_kind = ADDRCOL_MARK;
+	ac->ac_mark = addr_backtick_mark;
+	ac->ac_col = eap->skip ? 0 : addr_backtick_pos.col;
+    }
+    if (*eap->cmd == '.' && (VIM_ISDIGIT(eap->cmd[1]) || eap->cmd[1] == '$'))
+    {
+	++eap->cmd;
+	if (*eap->cmd == '$')
+	{
+	    ++eap->cmd;
+	    ac->ac_col = MAXCOL;
+	}
+	else
+	{
+	    long n = getdigits(&eap->cmd);
+
+	    if (n <= 0 || n >= MAXCOL)
+	    {
+		*errormsg = _(e_invalid_range);
+		return FAIL;
+	    }
+	    ac->ac_col = (colnr_T)n - 1;
+	}
+	ac->ac_kind = ADDRCOL_VCOL;
+	ac->ac_mark = NUL;
+    }
+    return OK;
+}
+
 /*
  * Parse the address range, if any, in "eap".
  * May set the last search pattern, unless "silent" is TRUE.
@@ -3473,9 +4305,12 @@ parse_cmd_address(exarg_T *eap, char **errormsg, int silent)
     int		ret = FAIL;
 
     // Repeat for all ',' or ';' separated addresses.
+    CLEAR_FIELD(eap->addr_col);
     for (;;)
     {
 	eap->line1 = eap->line2;
+	eap->addr_col[0] = eap->addr_col[1];
+	CLEAR_FIELD(eap->addr_col[1]);
 	eap->line2 = default_address(eap);
 	eap->cmd = skipwhite(eap->cmd);
 	lnum = get_address(eap, &eap->cmd, eap->addr_type, eap->skip, silent,
@@ -3584,7 +4419,12 @@ parse_cmd_address(exarg_T *eap, char **errormsg, int silent)
 	    }
 	}
 	else
+	{
 	    eap->line2 = lnum;
+	    if (eap->addr_type == ADDR_LINES
+				   && parse_addr_col(eap, lnum, errormsg) == FAIL)
+		goto theend;
+	}
 	eap->addr_count++;
 
 	if (*eap->cmd == ';')
@@ -3613,6 +4453,7 @@ parse_cmd_address(exarg_T *eap, char **errormsg, int silent)
     if (eap->addr_count == 1)
     {
 	eap->line1 = eap->line2;
+	eap->addr_col[0] = eap->addr_col[1];
 	// ... but only implicit: really no address given
 	if (lnum == MAXLNUM)
 	    eap->addr_count = 0;
@@ -4470,7 +5311,7 @@ skip_range(
 {
     char_u	*cmd = cmd_start;
 
-    while (vim_strchr((char_u *)" \t0123456789.$%'/?-+,;\\", *cmd) != NULL)
+    while (vim_strchr((char_u *)" \t0123456789.$%'`/?-+,;\\", *cmd) != NULL)
     {
 	if (*cmd == '\\')
 	{
@@ -4479,7 +5320,7 @@ skip_range(
 	    else
 		break;
 	}
-	else if (*cmd == '\'')
+	else if (*cmd == '\'' || *cmd == '`')
 	{
 	    char_u *p = cmd;
 
@@ -4610,6 +5451,7 @@ get_address(
 
     cmd = skipwhite(*ptr);
     lnum = MAXLNUM;
+    addr_backtick_mark = NUL;
     do
     {
 	switch (*cmd)
@@ -4741,6 +5583,35 @@ get_address(
 			}
 			lnum = fp->lnum;
 		    }
+		}
+		break;
+
+	    case '`':			    // '`' - mark with its column
+		if (*++cmd == NUL)
+		{
+		    cmd = NULL;
+		    goto error;
+		}
+		if (addr_type != ADDR_LINES)
+		{
+		    addr_error(addr_type);
+		    cmd = NULL;
+		    goto error;
+		}
+		addr_backtick_mark = *cmd;
+		if (skip)
+		    ++cmd;
+		else
+		{
+		    fp = getmark(*cmd, FALSE);
+		    ++cmd;
+		    if (check_mark(fp) == FAIL)
+		    {
+			cmd = NULL;
+			goto error;
+		    }
+		    lnum = fp->lnum;
+		    addr_backtick_pos = *fp;
 		}
 		break;
 

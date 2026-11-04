@@ -3846,3 +3846,7 @@ EXTERN char e_changing_image_backend_failed[]
 EXTERN char e_image_id_nr_does_not_exist[]
 	INIT(= N_("E1587: Image ID %d does not exist"));
 #endif
+EXTERN char e_column_range_not_supported_for_this_command[]
+	INIT(= N_("E1588: Column range not supported for this command"));
+EXTERN char e_cannot_nest_column_range_commands[]
+	INIT(= N_("E1589: Cannot nest commands with a column range"));

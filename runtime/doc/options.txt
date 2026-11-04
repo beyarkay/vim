@@ -2002,6 +2002,15 @@ A jump table for the options with a short description can be found at |Q_op|.
 	When 'textwidth' is zero then the items with '-' and '+' are not used.
 	A maximum of 256 columns are highlighted.
 
+						*'columnrange'* *'colr'*
+						*'nocolumnrange'* *'nocolr'*
+'columnrange' 'colr'	boolean	(default off)
+			global
+	When on, typing ":" in characterwise or blockwise Visual mode starts
+	the command-line with "`<,`>" instead of "'<,'>".  The Ex command
+	then only works on the selected text instead of on whole lines, see
+	|:range-col|.  Linewise Visual mode still uses "'<,'>".
+
 						*'columns'* *'co'* *E594*
 'columns' 'co'		number	(default 80 or terminal width)
 			global

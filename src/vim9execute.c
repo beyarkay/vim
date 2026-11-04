@@ -3827,10 +3827,14 @@ exec_instructions(ectx_T *ectx)
 		    ea.addr_type = ADDR_LINES;
 		    ea.cmd = iptr->isn_arg.string;
 		    SOURCING_LNUM = iptr->isn_lnum;
-		    parse_cmd_address(&ea, &error, FALSE);
-		    if (ea.cmd == NULL)
+		    if (parse_cmd_address(&ea, &error, FALSE) == FAIL
+							       || ea.cmd == NULL)
+		    {
+			// only for an invalid column, e.g. "1.0"
+			if (error != NULL)
+			    emsg(error);
 			goto on_error;
-		    // error is always NULL when using ADDR_LINES
+		    }
 		    error = ex_range_without_command(&ea);
 		    if (error != NULL)
 		    {

@@ -431,6 +431,9 @@ u_savecommon(
 	if (!undo_allowed())
 	    return FAIL;
 
+	// A command with a column range first saves the original lines.
+	colrange_before_undo_save();
+
 #ifdef FEAT_NETBEANS_INTG
 	/*
 	 * Netbeans defines areas that cannot be modified.  Bail out here when

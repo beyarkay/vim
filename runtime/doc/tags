@@ -167,6 +167,8 @@ $quote	eval.txt	/*$quote*
 'cocu'	options.txt	/*'cocu'*
 'cole'	options.txt	/*'cole'*
 'colorcolumn'	options.txt	/*'colorcolumn'*
+'colr'	options.txt	/*'colr'*
+'columnrange'	options.txt	/*'columnrange'*
 'columns'	options.txt	/*'columns'*
 'com'	options.txt	/*'com'*
 'comments'	options.txt	/*'comments'*
@@ -616,6 +618,8 @@ $quote	eval.txt	/*$quote*
 'noci'	options.txt	/*'noci'*
 'nocin'	options.txt	/*'nocin'*
 'nocindent'	options.txt	/*'nocindent'*
+'nocolr'	options.txt	/*'nocolr'*
+'nocolumnrange'	options.txt	/*'nocolumnrange'*
 'nocompatible'	options.txt	/*'nocompatible'*
 'noconfirm'	options.txt	/*'noconfirm'*
 'noconsk'	options.txt	/*'noconsk'*
@@ -2311,6 +2315,7 @@ $quote	eval.txt	/*$quote*
 :_%%n	cmdline.txt	/*:_%%n*
 :_%:	cmdline.txt	/*:_%:*
 :_%<	cmdline.txt	/*:_%<*
+:`x	cmdline.txt	/*:`x*
 :a	insert.txt	/*:a*
 :ab	map.txt	/*:ab*
 :abbreviate	map.txt	/*:abbreviate*
@@ -3218,6 +3223,9 @@ $quote	eval.txt	/*$quote*
 :range	cmdline.txt	/*:range*
 :range!	change.txt	/*:range!*
 :range-closed-fold	cmdline.txt	/*:range-closed-fold*
+:range-col	cmdline.txt	/*:range-col*
+:range-col-block	cmdline.txt	/*:range-col-block*
+:range-column	cmdline.txt	/*:range-column*
 :range-offset	cmdline.txt	/*:range-offset*
 :range-pattern	cmdline.txt	/*:range-pattern*
 :re	insert.txt	/*:re*
@@ -4798,6 +4806,8 @@ E1584	builtin.txt	/*E1584*
 E1585	options.txt	/*E1585*
 E1586	options.txt	/*E1586*
 E1587	builtin.txt	/*E1587*
+E1588	cmdline.txt	/*E1588*
+E1589	cmdline.txt	/*E1589*
 E159	sign.txt	/*E159*
 E16	cmdline.txt	/*E16*
 E160	sign.txt	/*E160*

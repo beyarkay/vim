@@ -16,6 +16,8 @@ int has_cmdmod(cmdmod_T *cmod, int ignore_silent);
 int cmdmod_error(int ignore_silent);
 void apply_cmdmod(cmdmod_T *cmod);
 void undo_cmdmod(cmdmod_T *cmod);
+void colrange_before_undo_save(void);
+void colrange_ml_close(buf_T *buf);
 int parse_cmd_address(exarg_T *eap, char **errormsg, int silent);
 char_u *skip_option_env_lead(char_u *start);
 int number_method(char_u *cmd);

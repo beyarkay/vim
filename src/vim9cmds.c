@@ -2271,10 +2271,13 @@ compile_put(char_u *arg, exarg_T *eap, cctx_T *cctx, int fixindent)
     else
     {
 	// Either no range or a number.
-	// "errormsg" will not be set because the range is ADDR_LINES.
 	if (parse_cmd_address(eap, &errormsg, FALSE) == FAIL)
-	    // cannot happen
+	{
+	    // only for an invalid column, e.g. "1.0"
+	    if (errormsg != NULL)
+		emsg(errormsg);
 	    return NULL;
+	}
 	if (eap->addr_count == 0)
 	    lnum = -1;
 	else
