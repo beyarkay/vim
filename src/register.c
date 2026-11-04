@@ -1456,21 +1456,7 @@ op_yank(oparg_T *oap, int deleting, int mess)
 	yanktype = oap->colrange == COLRANGE_BLOCK ? MBLOCK : MCHAR;
 	y_current->y_type = yanktype;
 	if (yanktype == MBLOCK)
-	{
-	    if (oap->start_vcol != MAXCOL && oap->end_vcol != MAXCOL)
-		y_current->y_width = oap->end_vcol - oap->start_vcol;
-	    else if (oap->start_vcol == MAXCOL)
-		y_current->y_width = 0;
-	    else
-		for (y_idx = 0; y_idx < y_current->y_size; ++y_idx)
-		{
-		    colnr_T w = linetabsize_str(
-					   y_current->y_array[y_idx].string) - 1;
-
-		    if (w > y_current->y_width)
-			y_current->y_width = w;
-		}
-	}
+	    y_current->y_width = oap->end_vcol - oap->start_vcol;
     }
 
     if (curr != y_current)	// append the new block to the old block

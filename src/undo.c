@@ -261,40 +261,25 @@ u_save(linenr_T top, linenr_T bot)
 }
 
 /*
- * Like u_save() for lines "top + 1" to "bot - 1", but store "lines" with
- * lengths "lens" in the undo entry instead of the current text.  Used for a
- * command with a column range, the original lines are saved while the buffer
- * has the narrowed lines.
+ * Like u_save(), but when a new undo entry was made for lines "top + 1" to
+ * "bot - 1" return its saved lines, so that the caller can change what undo
+ * restores.  Returns NULL otherwise.
  */
-    int
-u_save_lines(linenr_T top, linenr_T bot, char_u **lines, long *lens)
+    undoline_T *
+u_save_get_lines(linenr_T top, linenr_T bot)
 {
     u_header_T	*head = curbuf->b_u_newhead;
     u_entry_T	*entry = head == NULL ? NULL : head->uh_entry;
     u_entry_T	*uep;
-    long	i;
 
-    if (u_save(top, bot) == FAIL)
-	return FAIL;
-    if (curbuf->b_u_newhead == NULL)
-	return OK;
+    if (u_save(top, bot) == FAIL || curbuf->b_u_newhead == NULL)
+	return NULL;
     uep = curbuf->b_u_newhead->uh_entry;
-    // When an existing entry was used it has older text, keep it.
-    if (uep == NULL || (curbuf->b_u_newhead == head && uep == entry)
-	    || uep->ue_top != top || uep->ue_size != bot - top - 1)
-	return OK;
-    for (i = 0; i < uep->ue_size; ++i)
-    {
-	char_u *line = vim_memsave(lines[i], lens[i]);
-
-	if (line == NULL)
-	    return FAIL;
-	vim_free(uep->ue_array[i].ul_line);
-	uep->ue_array[i].ul_line = line;
-	uep->ue_array[i].ul_len = lens[i];
-	uep->ue_array[i].ul_textlen = (colnr_T)STRLEN(line);
-    }
-    return OK;
+    // An entry that already existed has older text, keep it.
+    if (uep == NULL || uep == entry || uep->ue_top != top
+					   || uep->ue_size != bot - top - 1)
+	return NULL;
+    return uep->ue_array;
 }
 
 /*

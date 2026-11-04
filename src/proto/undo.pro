@@ -1,7 +1,7 @@
 // undo.c
 int u_save_cursor(void);
 int u_save(linenr_T top, linenr_T bot);
-int u_save_lines(linenr_T top, linenr_T bot, char_u **lines, long *lens);
+undoline_T *u_save_get_lines(linenr_T top, linenr_T bot);
 int u_savesub(linenr_T lnum);
 int u_inssub(linenr_T lnum);
 int u_savedel(linenr_T lnum, long nlines);
