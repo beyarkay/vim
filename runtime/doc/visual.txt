@@ -1,4 +1,4 @@
-*visual.txt*	For Vim version 9.2.  Last change: 2026 May 22
+*visual.txt*	For Vim version 9.2.  Last change: 2026 Nov 04
 
 
 		  VIM REFERENCE MANUAL	  by Bram Moolenaar
@@ -264,7 +264,7 @@ The objects that can be used are:
 	i`	inner string in backticks			|v_i`|
 
 Additionally the following commands can be used:
-	:	start Ex command for highlighted lines (1)	|v_:|
+	:	start Ex command for highlighted lines (5)	|v_:|
 	r	change (4)					|v_r|
 	s	change						|v_s|
 	C	change (2)(4)					|v_C|
@@ -283,11 +283,13 @@ Additionally the following commands can be used:
 	I	block insert					|v_b_I|
 	A	block append					|v_b_A|
 
-(1): Whole lines, unless 'columnrange' is set, see |:visual_example|.
+(1): Always whole lines, see |:visual_example|.
 (2): Whole lines when not using CTRL-V.
 (3): Whole lines when not using CTRL-V, delete until the end of the line when
      using CTRL-V.
 (4): When using CTRL-V operates on the block only.
+(5): Whole lines, unless 'columnrange' is set and the Visual area is
+     characterwise or blockwise, see |:range-col|.
 
 Note that the ":vmap" command can be used to specifically map keys in Visual
 mode.  For example, if you would like the "/" command not to extend the Visual

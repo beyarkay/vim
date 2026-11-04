@@ -1,4 +1,4 @@
-*options.txt*	For Vim version 9.2.  Last change: 2026 Oct 25
+*options.txt*	For Vim version 9.2.  Last change: 2026 Nov 04
 
 
 		  VIM REFERENCE MANUAL	  by Bram Moolenaar
@@ -2010,6 +2010,8 @@ A jump table for the options with a short description can be found at |Q_op|.
 	the command-line with "`<,`>" instead of "'<,'>".  The Ex command
 	then only works on the selected text instead of on whole lines, see
 	|:range-col|.  Linewise Visual mode still uses "'<,'>".
+	Only used when ":" is typed, not for a mapping, |:normal| or for an
+	operator that starts a command-line, such as |v_!|.
 
 						*'columns'* *'co'* *E594*
 'columns' 'co'		number	(default 80 or terminal width)

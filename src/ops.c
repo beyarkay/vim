@@ -3621,8 +3621,10 @@ op_colon(oparg_T *oap)
     stuffcharReadbuff(':');
     if (oap->is_VIsual)
 	// With 'columnrange' only use the selected text for a characterwise
-	// or blockwise selection.
-	stuffReadbuff((char_u *)(p_colr && curbuf->b_visual.vi_mode != 'V'
+	// or blockwise selection.  Only when ":" was typed, a mapping may
+	// expect whole lines.
+	stuffReadbuff((char_u *)(p_colr && oap->op_type == OP_COLON
+		    && KeyTyped && curbuf->b_visual.vi_mode != 'V'
 							? "`<,`>" : "'<,'>"));
     else
     {

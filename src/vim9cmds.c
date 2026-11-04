@@ -2264,6 +2264,12 @@ compile_put(char_u *arg, exarg_T *eap, cctx_T *cctx, int fixindent)
     else if (eap->regname != NUL)
 	++line;
 
+    if (range_has_column(eap->cmd))
+    {
+	// the compiled ":put" only uses a line number
+	emsg(_(e_column_range_not_supported_for_this_command));
+	return NULL;
+    }
     if (compile_variable_range(eap, cctx) == OK)
     {
 	lnum = above ? LNUM_VARIABLE_RANGE_ABOVE : LNUM_VARIABLE_RANGE;

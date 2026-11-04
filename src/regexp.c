@@ -2145,7 +2145,7 @@ vim_regsub_multi(
     rex.reg_mmatch = rmp;
     rex.reg_buf = curbuf;	// always works on the current buffer!
     rex.reg_firstlnum = lnum;
-    rex.reg_maxline = curbuf->b_ml.ml_line_count - lnum;
+    rex.reg_maxline = colrange_last_match_line(curbuf, lnum) - lnum;
     rex.reg_line_lbr = FALSE;
     result = vim_regsub_both(source, NULL, dest, destlen, flags);
 
@@ -2882,7 +2882,7 @@ init_regexec_multi(
     rex.reg_buf = buf;
     rex.reg_win = win;
     rex.reg_firstlnum = lnum;
-    rex.reg_maxline = rex.reg_buf->b_ml.ml_line_count - lnum;
+    rex.reg_maxline = colrange_last_match_line(rex.reg_buf, lnum) - lnum;
     rex.reg_line_lbr = FALSE;
     rex.reg_ic = rmp->rmm_ic;
     rex.reg_icombine = FALSE;

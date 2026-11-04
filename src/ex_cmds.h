@@ -1947,6 +1947,7 @@ typedef struct
 				// ADDRCOL_VCOL: zero-based screen column,
 				// MAXCOL for "$"
     int		ac_mark;	// ADDRCOL_MARK: name of the mark
+    linenr_T	ac_lnum;	// ADDRCOL_MARK: line of the mark
 } addr_col_T;
 
 # define ADDRCOL_NONE	0	// no column given

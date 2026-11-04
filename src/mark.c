@@ -1100,6 +1100,8 @@ mark_adjust_internal(
     if (line2 < line1 && amount_after == 0L)	    // nothing to do
 	return;
 
+    colrange_mark_adjust(line1, line2, amount, amount_after);
+
     if ((cmdmod.cmod_flags & CMOD_LOCKMARKS) == 0)
     {
 	// named marks, lower case and upper case

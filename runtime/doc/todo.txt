@@ -1,4 +1,4 @@
-*todo.txt*	For Vim version 9.2.  Last change: 2026 Oct 25
+*todo.txt*	For Vim version 9.2.  Last change: 2026 Nov 04
 
 
 		  VIM REFERENCE MANUAL	  by Bram Moolenaar

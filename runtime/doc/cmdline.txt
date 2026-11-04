@@ -1,4 +1,4 @@
-*cmdline.txt*	For Vim version 9.2.  Last change: 2026 Oct 25
+*cmdline.txt*	For Vim version 9.2.  Last change: 2026 Nov 04
 
 
 		  VIM REFERENCE MANUAL	  by Bram Moolenaar
@@ -823,7 +823,7 @@ Line numbers may be specified with:		*:range* *{address}*
 	`x		the line of the position of mark x, the	   *:`x*
 			range starts or ends at the mark's column,
 			see |:range-col|
-	{address}.{col}	screen column {col} in the line of	*:range-col-block*
+	{address}.{col}	screen column {col} in the line of  *:range-col-block*
 			{address}, the range is a block of
 			columns, see |:range-col|
 	/{pattern}[/]	the next line where {pattern} matches	   *:/*
@@ -966,8 +966,14 @@ double-width character counts for more than one column.  Use "$" for the end
 of each line: >
 	:'<.10,'>.$s/$/;/
 When one of the addresses has no column, the block starts in the first column
-or ends at the end of the line.  Note that ".5" at the start of an address
-still means ".+5", use "..5" for column 5 in the current line.
+or ends at the end of the line.  With only one address the block is one column
+wide, e.g. ":5.3d" deletes the character in screen column 3 of line 5.  A
+count after the command starts at the last address and uses its column.  Note
+that ".5" at the start of an address still means ".+5", use "..5" for column 5
+in the current line.  Column zero is ignored, thus a Float used as a line
+number, e.g. "3.0", still works.  When "`x" is used together with
+"{address}.{col}" the range is blockwise and the screen column of mark x is
+used.
 
 Characterwise: When "`x" is used instead of "'x" the range starts or ends at
 the position of mark x, instead of including whole lines.  The character under
@@ -975,40 +981,77 @@ the mark at the end is included.  E.g., to delete the text from mark a up to
 and including the character under mark b: >
 	:`a,`bdelete
 <
+When the other address has no column, e.g. ":'a,`b" or ":`a,$", the range
+starts at the start of the line or ends at the end of the line.  The mark
+must be in the current buffer, a file mark in another file gives |E20|.  With
+an offset to another line, e.g. "`a+1", the column of the mark is not used.
+The line break after the last line is never included, thus ":`<,`>d" does not
+join lines like "d" in Visual mode does after "v$".
+
 "`<,`>" uses the last Visual area: when it was blockwise the range is the block
 (including "$" when it was used), when it was characterwise the range is the
-selected text and when it was linewise it is the lines.  When 'columnrange' is
-set, typing ":" in characterwise or blockwise Visual mode starts the
-command-line with "`<,`>", see |v_:|.
+selected text and when it was linewise it is the lines.  'selection' is used
+like for a Visual operator: with "exclusive" the character under the end of
+the Visual area is not included.  For other marks it is always included.  When
+'columnrange' is set, typing ":" in characterwise or blockwise Visual mode
+starts the command-line with "`<,`>", see |v_:|.  |:star| always uses whole
+lines.
+
+When the range starts or ends in a closed fold it is extended to the whole
+fold, like with a line range, see |:range-closed-fold|.  The columns are not
+changed.
 
 The command sees each line in the range with only the text inside the range,
-thus "^" and "$" in a pattern match at the edges of a block.  After the
-command the text before and after the range is put back.  When the command
-adds lines to a block, they are added below the block, starting in the first
-column of the block.  When the command deletes lines from a block, the text
-in the block below them moves up.  Text after a block in the same line moves
-when the text in the block gets longer or shorter.  When text is added to a
-line that is too short to reach the block, it is padded with spaces.  A <Tab>
-or double-width character partly inside a block is changed into spaces when
-the text in the block in that line is changed.
+thus "^" and "$" in a pattern match at the edges of a block.  While executing
+the command the Visual area is all of this text, thus |/\%V| matches inside
+the range.  A pattern cannot match a line break in the last line of the range,
+it works like the last line in the buffer.  After the command the text before
+and after the range is put back.  When the command adds lines to a block, the
+text in the block below them moves down, lines beyond the end of the range
+are inserted below it, starting in the first column of the block.  When the
+command deletes lines from a block, the text in the block below them moves
+up.  Text after a block in the same line moves when the text in the block
+gets longer or shorter.  When text is added to a line that is too short to
+reach the block, it is padded with spaces.  A <Tab> or double-width character
+partly inside a block is changed into spaces when the text in the block in
+that line is changed.
+
+A blockwise |:>| and |:<| shift the text in the block like |v_>| and |v_<|.
+Other commands that compute an indent or <Tab>s, e.g. |:retab| and |:center|,
+work as if the block starts in the first column.
 
 The changes made by the command and putting back the text are undone in one
 step.  |:delete| and |:yank| store the text blockwise or characterwise in the
-register.  When the command does not change the text, the lines are not
-changed either, e.g. ":yank" and ":write" do not set 'modified'.
+register, also for |TextYankPost|.  When the command does not change the
+text, the lines are not changed either, e.g. ":yank" and ":write" do not set
+'modified'.
 
 							*E1588*
-A column range cannot be used for |:move|, |:copy| and |:t| and for commands
-that do not use lines in the current buffer.
+A column range cannot be used for |:move|, |:copy|, |:t|, |:insert|, ":put!"
+(see |:put|), |:diffget| and |:diffput|.  In a compiled |Vim9| function it
+cannot be used for |:put|.  For commands that do not use lines "`x" gives an
+error and a column after an address is ignored.
 							*E1589*
 A command with a column range cannot be used while executing another command
 with a column range, e.g. with |:global|.
+							*E1591*
+Undo is not possible while executing a command with a column range, e.g.
+":1.3,5.8normal xu" gives E1591.
 
-The command should only change lines in the range, changing lines above or
-below it, e.g. with ":normal", has unexpected results.
+							*E1590*
+The command may insert or delete lines above and below the range.  But when
+the line just above or below the range is deleted, the text before and after
+the range cannot be put back and E1590 is given.  Use |u| to restore the text.
+
+Things that also see the narrowed text while the command is executed:
+autocommands triggered by the command, functions such as |getline()| and
+|col()|, and the screen, e.g. when |:s_c| asks for confirmation.  Text
+properties (|text-properties|) in a changed line may end up in the wrong
+position, undo restores them.
 
 A range with a column and no command moves the cursor to that position,
-":10.5" moves the cursor to screen column 5 in line 10.
+":10.5" moves the cursor to screen column 5 in line 10 and ":`a" moves the
+cursor to mark a.
 
 
 Count and Range						*N:*
@@ -1028,7 +1071,7 @@ Visual Mode and Range
 		history for repeating a command on different Visually selected
 		lines.
 		When 'columnrange' is set and the Visual area is
-		characterwise or blockwise `:`<,`>` is used instead, the
+		characterwise or blockwise ":`<,`>" is used instead, the
 		command then only works on the selected text, see
 		|:range-col|.
 
