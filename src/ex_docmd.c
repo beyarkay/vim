@@ -69,7 +69,7 @@ static pos_T	addr_backtick_pos;
 
 static char	*colrange_resolve(exarg_T *eap);
 static char	*colrange_start(exarg_T *eap, colrange_T *cr);
-static void	colrange_end(exarg_T *eap, colrange_T *cr);
+static void	colrange_end(colrange_T *cr);
 
 #ifndef FEAT_MENU
 # define ex_emenu		ex_ni
@@ -2717,7 +2717,7 @@ do_one_cmd(
     }
 
     if (colrange.cr_active)
-	colrange_end(&ea, &colrange);
+	colrange_end(&colrange);
 
     // A command such as ":autocmd" may continue after a '|' in its argument.
     // Then the lines after the newline must follow that command.  Not for a
@@ -4314,7 +4314,7 @@ theend:
  * and after the columns.
  */
     static void
-colrange_end(exarg_T *eap, colrange_T *cr)
+colrange_end(colrange_T *cr)
 {
     buf_T	*buf = cr->cr_buf.br_buf;
     aco_save_T	aco;
