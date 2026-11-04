@@ -261,6 +261,28 @@ u_save(linenr_T top, linenr_T bot)
 }
 
 /*
+ * Like u_save(), but when a new undo entry was made for lines "top + 1" to
+ * "bot - 1" return its saved lines, so that the caller can change what undo
+ * restores.  Returns NULL otherwise.
+ */
+    undoline_T *
+u_save_get_lines(linenr_T top, linenr_T bot)
+{
+    u_header_T	*head = curbuf->b_u_newhead;
+    u_entry_T	*entry = head == NULL ? NULL : head->uh_entry;
+    u_entry_T	*uep;
+
+    if (u_save(top, bot) == FAIL || curbuf->b_u_newhead == NULL)
+	return NULL;
+    uep = curbuf->b_u_newhead->uh_entry;
+    // An entry that already existed has older text, keep it.
+    if (uep == NULL || uep == entry || uep->ue_top != top
+					   || uep->ue_size != bot - top - 1)
+	return NULL;
+    return uep->ue_array;
+}
+
+/*
  * Save the line "lnum" (used by ":s" and "~" command).
  * The line is replaced, so the new bottom line is lnum + 1.
  * Careful: may trigger autocommands that reload the buffer.
@@ -430,6 +452,9 @@ u_savecommon(
 	// to make all change commands fail.
 	if (!undo_allowed())
 	    return FAIL;
+
+	// A command with a column range first saves the original lines.
+	colrange_before_undo_save();
 
 #ifdef FEAT_NETBEANS_INTG
 	/*
@@ -2265,7 +2290,7 @@ u_doit(int startcount)
 {
     int count = startcount;
 
-    if (!undo_allowed())
+    if (!undo_allowed() || colrange_blocks_undo(curbuf))
 	return;
 
     u_newcount = 0;
@@ -2366,6 +2391,8 @@ undo_time(
 	text_locked_msg();
 	return;
     }
+    if (colrange_blocks_undo(curbuf))
+	return;
 
     // First make sure the current undoable change is synced.
     if (!curbuf->b_u_synced)
@@ -3618,7 +3645,7 @@ u_undoline(void)
     colnr_T	t;
     undoline_T  oldp;
 
-    if (undo_off)
+    if (undo_off || colrange_blocks_undo(curbuf))
 	return;
 
     if (curbuf->b_u_line_ptr.ul_line == NULL

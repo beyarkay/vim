@@ -112,6 +112,7 @@ NEW_TESTS = \
 	test_cmdline \
 	test_cmdmods \
 	test_cmdwin \
+	test_colrange \
 	test_command_count \
 	test_comments \
 	test_comparators \
@@ -414,6 +415,7 @@ NEW_TESTS_RES = \
 	test_cmdline.res \
 	test_cmdmods.res \
 	test_cmdwin.res \
+	test_colrange.res \
 	test_command_count.res \
 	test_comments.res \
 	test_comparators.res \

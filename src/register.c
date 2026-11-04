@@ -1449,6 +1449,16 @@ op_yank(oparg_T *oap, int deleting, int mess)
 	}
     }
 
+    // ":delete" and ":yank" with a column range yank the narrowed lines, which
+    // are stored blockwise or characterwise.
+    if (oap->colrange != COLRANGE_NONE && yanktype == MLINE)
+    {
+	yanktype = oap->colrange == COLRANGE_BLOCK ? MBLOCK : MCHAR;
+	y_current->y_type = yanktype;
+	if (yanktype == MBLOCK)
+	    y_current->y_width = oap->end_vcol - oap->start_vcol;
+    }
+
     if (curr != y_current)	// append the new block to the old block
     {
 	string_T *new_ptr;

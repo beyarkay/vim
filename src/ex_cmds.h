@@ -1938,6 +1938,28 @@ EXCMD(CMD_decrement,	"--",		ex_incdec,
 typedef enum CMD_index cmdidx_T;
 
 /*
+ * Column given with an Ex address, see ":help :range-column".
+ */
+typedef struct
+{
+    int		ac_kind;	// ADDRCOL_NONE, ADDRCOL_MARK or ADDRCOL_VCOL
+    colnr_T	ac_col;		// ADDRCOL_MARK: byte column of the mark
+				// ADDRCOL_VCOL: zero-based screen column,
+				// MAXCOL for "$"
+    int		ac_mark;	// ADDRCOL_MARK: name of the mark
+    linenr_T	ac_lnum;	// ADDRCOL_MARK: line of the mark
+} addr_col_T;
+
+# define ADDRCOL_NONE	0	// no column given
+# define ADDRCOL_MARK	1	// "`x": mark with its column
+# define ADDRCOL_VCOL	2	// "{address}.{col}": screen column
+
+// Values for exarg_T "colrange"
+# define COLRANGE_NONE	0	// normal line range
+# define COLRANGE_CHAR	1	// characterwise: "`a,`b"
+# define COLRANGE_BLOCK	2	// blockwise: "1.3,$.5" or "`<,`>" after CTRL-V
+
+/*
  * Arguments used for an Ex command.
  */
 struct exarg
@@ -1973,6 +1995,15 @@ struct exarg
     char	*errmsg;	// returned error message
     char_u	*(*ea_getline)(int, void *, int, getline_opt_T);
     void	*cookie;	// argument for getline()
+    addr_col_T	addr_col[2];	// column given with line1 and line2
+    int		colrange;	// COLRANGE_NONE, COLRANGE_CHAR or
+				// COLRANGE_BLOCK
+    colnr_T	col1;		// COLRANGE_CHAR: byte column in line1
+				// COLRANGE_BLOCK: first screen column
+    colnr_T	col2;		// COLRANGE_CHAR: byte column in line2
+				// COLRANGE_BLOCK: last screen column
+				// (both zero-based, inclusive, MAXCOL is
+				// end of line)
 # ifdef FEAT_EVAL
     cstack_T	*cstack;	// condition stack for ":if" etc.
     class_T	*ea_class;		// Name of class being defined. Used by :class

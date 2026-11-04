@@ -1,4 +1,4 @@
-*visual.txt*	For Vim version 9.2.  Last change: 2026 May 22
+*visual.txt*	For Vim version 9.2.  Last change: 2026 Nov 04
 
 
 		  VIM REFERENCE MANUAL	  by Bram Moolenaar
@@ -264,7 +264,7 @@ The objects that can be used are:
 	i`	inner string in backticks			|v_i`|
 
 Additionally the following commands can be used:
-	:	start Ex command for highlighted lines (1)	|v_:|
+	:	start Ex command for highlighted lines (5)	|v_:|
 	r	change (4)					|v_r|
 	s	change						|v_s|
 	C	change (2)(4)					|v_C|
@@ -288,6 +288,8 @@ Additionally the following commands can be used:
 (3): Whole lines when not using CTRL-V, delete until the end of the line when
      using CTRL-V.
 (4): When using CTRL-V operates on the block only.
+(5): Whole lines, unless 'columnrange' is set and the Visual area is
+     characterwise or blockwise, see |:range-col|.
 
 Note that the ":vmap" command can be used to specifically map keys in Visual
 mode.  For example, if you would like the "/" command not to extend the Visual
@@ -389,12 +391,15 @@ to the `.` command is not used.
 7. Examples						*visual-examples*
 
 							*:visual_example*
-Currently the ":" command works on whole lines only.  When you select part of
-a line, doing something like ":!date" will replace the whole line.  If you
-want only part of the line to be replaced you will have to make a mapping for
-it.  In a future release ":" may work on partial lines.
+By default the ":" command works on whole lines.  When you select part of a
+line, doing something like ":!date" will replace the whole line.  To only
+replace the selected text use a column range: >
+	:`<,`>!date
+Setting 'columnrange' makes ":" in Visual mode insert "`<,`>", see
+|:range-col|.
 
-Here is an example, to replace the selected text with the output of "date": >
+Before Vim supported column ranges you needed a mapping for this.  Here is an
+example, to replace the selected text with the output of "date": >
 	:vmap _a <Esc>`>a<CR><Esc>`<i<CR><Esc>!!date<CR>kgJgJ
 
 (In the <> notation |<>|, when typing it you should type it literally; you

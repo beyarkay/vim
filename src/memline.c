@@ -891,6 +891,7 @@ ml_close(buf_T *buf, int del_file)
 {
     if (buf->b_ml.ml_mfp == NULL)		// not open
 	return;
+    colrange_ml_close(buf);
     mf_close(buf->b_ml.ml_mfp, del_file);	// close the .swp file
     if (buf->b_ml.ml_line_lnum != 0
 		      && (buf->b_ml.ml_flags & (ML_LINE_DIRTY | ML_ALLOCATED)))

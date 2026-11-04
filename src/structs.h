@@ -4569,6 +4569,8 @@ typedef struct oparg_S
     long	prev_count0;	// ca.count0 saved for K_CURSORHOLD
     int		excl_tr_ws;	// exclude trailing whitespace for yank of a
 				// block
+    int		colrange;	// ":delete"/":yank" with a column range:
+				// COLRANGE_CHAR or COLRANGE_BLOCK
 } oparg_T;
 
 /*

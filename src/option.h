@@ -515,6 +515,7 @@ EXTERN char_u	*p_cb;		// 'clipboard'
 EXTERN char_u	*p_cpm;		// 'clipmethod'
 #endif
 EXTERN long	p_ch;		// 'cmdheight'
+EXTERN int	p_colr;		// 'columnrange'
 EXTERN char_u	*p_cms;		// 'commentstring'
 EXTERN char_u	*p_cpt;		// 'complete'
 EXTERN long	p_cto;		// 'completetimeout'

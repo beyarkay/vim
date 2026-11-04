@@ -4455,6 +4455,7 @@ ex_substitute(exarg_T *eap)
 	    size_t	copy_len;
 	    size_t	needed_size;
 	    long	nmatch_tl = 0;	// nr of lines matched below lnum
+	    linenr_T	last_lnum;	// last line a match can include
 	    int		do_again;	// do it again after joining lines
 	    int		skip_match = FALSE;
 	    linenr_T	sub_firstlnum;	// nr of first sub line
@@ -4893,10 +4894,12 @@ ex_substitute(exarg_T *eap)
 #endif
 
 		// When the match included the "$" of the last line it may
-		// go beyond the last line of the buffer.
-		if (nmatch > curbuf->b_ml.ml_line_count - sub_firstlnum + 1)
+		// go beyond the last line of the buffer, or the last line of a
+		// column range.
+		last_lnum = colrange_last_match_line(curbuf, sub_firstlnum);
+		if (nmatch > last_lnum - sub_firstlnum + 1)
 		{
-		    nmatch = curbuf->b_ml.ml_line_count - sub_firstlnum + 1;
+		    nmatch = last_lnum - sub_firstlnum + 1;
 		    skip_match = TRUE;
 		    // safety check
 		    if (nmatch < 0)

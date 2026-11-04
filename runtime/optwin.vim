@@ -1,7 +1,7 @@
 " These commands create the option window.
 "
 " Maintainer:	The Vim Project <https://github.com/vim/vim>
-" Last Change:	2026 Sep 30
+" Last Change:	2026 Nov 04
 " Former Maintainer:	Bram Moolenaar <Bram@vim.org>
 
 " If there already is an option window, jump to that one.
@@ -825,6 +825,8 @@ call <SID>AddOption("selection", gettext("\"old\", \"inclusive\" or \"exclusive\
 call <SID>OptionG("sel", &sel)
 call <SID>AddOption("selectmode", gettext("\"mouse\", \"key\" and/or \"cmd\"; when to start Select mode\ninstead of Visual mode"))
 call <SID>OptionG("slm", &slm)
+call <SID>AddOption("columnrange", gettext("\":\" in Visual mode only uses the selected text"))
+call <SID>BinOptionG("colr", &colr)
 if has("clipboard")
   call <SID>AddOption("clipboard", gettext("\"unnamed\" to use the * register like unnamed register\n\"autoselect\" to always put selected text on the clipboard"))
   call <SID>OptionG("cb", &cb)
